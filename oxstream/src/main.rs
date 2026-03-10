@@ -1,3 +1,10 @@
+use tracing::info;
+
 fn main() {
-    println!("Hello, world!");
+    init_tracing();
+    info!("Hello, world!");
+}
+
+fn init_tracing() {
+    tracing_subscriber::fmt::init();
 }
