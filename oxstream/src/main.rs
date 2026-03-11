@@ -1,8 +1,8 @@
 use anyhow::{Result, anyhow};
+use gst::prelude::*;
 use gst::{
     Element, ElementFactory, Pipeline, glib::object::ObjectExt, prelude::GObjectExtManualGst,
 };
-use gst::{MessageView, prelude::*};
 use tracing::{error, info};
 
 fn main() -> Result<()> {
@@ -16,11 +16,13 @@ fn main() -> Result<()> {
     let conv = make_element("videoconvert", None)?;
     info!("Video converter element created successfully");
 
-    info!("Encoder element created successfully");
     let sink = make_element("autovideosink", None)?;
+    info!("Video sink element created successfully");
 
     let pipeline = make_pipeline(vec![&src, &conv, &sink])?;
+    info!("Pipeline created successfully");
     Element::link_many([&src, &conv, &sink])?;
+    info!("Elements linked successfully");
 
     let Some(bus) = pipeline.bus() else {
         error!("Failed to get pipeline bus");
@@ -35,17 +37,25 @@ fn main() -> Result<()> {
     }
 
     for msg in bus.iter_timed(gst::ClockTime::NONE) {
-        use MessageView;
-
+        use gst::MessageView;
         match msg.view() {
-            MessageView::Eos(..) => break,
+            MessageView::Eos(..) => {
+                info!("End of stream reached.");
+                break;
+            }
             MessageView::Error(err) => {
-                println!(
-                    "Error from {:?}: {} ({:?})",
-                    err.src().map(|s| s.path_string()),
-                    err.error(),
-                    err.debug()
-                );
+                let err_msg = err.error().to_string();
+
+                if err_msg.contains("Output window was closed") {
+                    info!("Video window closed by user. Shutting down...");
+                } else {
+                    error!(
+                        "Error from {:?}: {} ({:?})",
+                        err.src().map(|s| s.path_string()),
+                        err_msg,
+                        err.debug()
+                    );
+                }
                 break;
             }
             _ => (),
