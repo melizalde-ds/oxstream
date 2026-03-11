@@ -5,6 +5,7 @@ use gst::prelude::*;
 use gst::{
     Element, ElementFactory, Pipeline, glib::object::ObjectExt, prelude::GObjectExtManualGst,
 };
+use std::os::fd::{AsRawFd, OwnedFd};
 use tracing::{error, info};
 
 #[tokio::main]
@@ -13,7 +14,16 @@ async fn main() -> Result<()> {
     init_gst()?;
     info!("GStreamer initialized successfully");
 
-    let src = make_element("pipewiresrc", None)?;
+    let (node_id, owned_fd) = screencast_source().await?;
+    let fd = owned_fd.as_raw_fd();
+
+    let src = make_element(
+        "pipewiresrc",
+        Some(vec![
+            ("fd", fd.to_string().as_str()),
+            ("path", node_id.to_string().as_str()),
+        ]),
+    )?;
     info!("Source element created successfully");
 
     let conv = make_element("videoconvert", None)?;
@@ -131,7 +141,7 @@ fn make_pipeline(elements: Vec<&Element>) -> Result<Pipeline> {
     Ok(pipeline)
 }
 
-async fn screencast_source() -> Result<(String, String)> {
+async fn screencast_source() -> Result<(u32, OwnedFd)> {
     let proxy = Screencast::new().await?;
     let session = proxy.create_session(Default::default()).await?;
 
@@ -145,5 +155,19 @@ async fn screencast_source() -> Result<(String, String)> {
                 .set_persist_mode(PersistMode::ExplicitlyRevoked),
         )
         .await?;
-    todo!()
+
+    let response = proxy
+        .start(&session, None, Default::default())
+        .await?
+        .response()?;
+
+    info!("Screencast started successfully: {:?}", response);
+    let node_id = response.streams()[0].pipe_wire_node_id();
+    info!("PipeWire node ID: {}", node_id);
+    let ownd_fd = proxy
+        .open_pipe_wire_remote(&session, Default::default())
+        .await?;
+    info!("Screencast session ID: {:?}", ownd_fd);
+
+    Ok((node_id, ownd_fd))
 }
