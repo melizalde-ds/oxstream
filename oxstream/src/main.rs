@@ -32,12 +32,33 @@ async fn main() -> Result<()> {
     let conv = make_element("videoconvert", None)?;
     info!("Video converter element created successfully");
 
-    let sink = make_element("autovideosink", None)?;
-    info!("Video sink element created successfully");
+    let enc = make_element(
+        "x264enc",
+        Some(vec![
+            ("tune", "zerolatency"),
+            ("speed-preset", "ultrafast"),
+            ("key-int-max", "30"),
+            ("bitrate", "2000"),
+        ]),
+    )?;
+    info!("H264 encoder element created successfully");
 
-    let pipeline = make_pipeline(vec![&src, &conv, &sink])?;
+    let enc_caps = make_element(
+        "capsfilter",
+        Some(vec![(
+            "caps",
+            "video/x-h264,profile=baseline,stream-format=byte-stream",
+        )]),
+    )?;
+    info!("Encoder caps filter element created successfully");
+
+    let sink = make_element("webrtcsink", None)?;
+    info!("WebRTC sink element created successfully");
+
+    let pipeline = make_pipeline(vec![&src, &conv, &enc, &enc_caps, &sink])?;
     info!("Pipeline created successfully");
-    Element::link_many([&src, &conv, &sink])?;
+
+    Element::link_many([&src, &conv, &enc, &enc_caps, &sink])?;
     info!("Elements linked successfully");
 
     let Some(bus) = pipeline.bus() else {
@@ -61,17 +82,12 @@ async fn main() -> Result<()> {
             }
             MessageView::Error(err) => {
                 let err_msg = err.error().to_string();
-
-                if err_msg.contains("Output window was closed") {
-                    info!("Video window closed by user. Shutting down...");
-                } else {
-                    error!(
-                        "Error from {:?}: {} ({:?})",
-                        err.src().map(|s| s.path_string()),
-                        err_msg,
-                        err.debug()
-                    );
-                }
+                error!(
+                    "Error from {:?}: {} ({:?})",
+                    err.src().map(|s| s.path_string()),
+                    err_msg,
+                    err.debug()
+                );
                 break;
             }
             _ => (),
@@ -173,12 +189,14 @@ async fn screencast_source() -> Result<(u32, OwnedFd)> {
             return Err(anyhow!("No streams available in screencast response"));
         }
     };
+
     let node_id = stream.pipe_wire_node_id();
     info!("PipeWire node ID: {}", node_id);
-    let ownd_fd = proxy
+
+    let owned_fd = proxy
         .open_pipe_wire_remote(&session, Default::default())
         .await?;
-    info!("Screencast session ID: {:?}", ownd_fd);
+    info!("PipeWire remote FD opened: {:?}", owned_fd);
 
-    Ok((node_id, ownd_fd))
+    Ok((node_id, owned_fd))
 }
