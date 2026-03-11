@@ -775,7 +775,9 @@ dependencies = [
 name = "oxstream-signal"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
+ "tokio",
 ]
 
 [[package]]
