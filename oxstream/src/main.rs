@@ -1,12 +1,14 @@
 use anyhow::{Result, anyhow};
-use ashpd::desktop::screencast::Screencast;
+use ashpd::desktop::PersistMode;
+use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
 use gst::prelude::*;
 use gst::{
     Element, ElementFactory, Pipeline, glib::object::ObjectExt, prelude::GObjectExtManualGst,
 };
 use tracing::{error, info};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     init_tracing();
     init_gst()?;
     info!("GStreamer initialized successfully");
@@ -127,4 +129,21 @@ fn make_pipeline(elements: Vec<&Element>) -> Result<Pipeline> {
         return Err(anyhow!("Failed to add elements to pipeline: {}", err));
     };
     Ok(pipeline)
+}
+
+async fn screencast_source() -> Result<(String, String)> {
+    let proxy = Screencast::new().await?;
+    let session = proxy.create_session(Default::default()).await?;
+
+    proxy
+        .select_sources(
+            &session,
+            SelectSourcesOptions::default()
+                .set_cursor_mode(CursorMode::Hidden)
+                .set_sources(SourceType::Monitor | SourceType::Window)
+                .set_multiple(false)
+                .set_persist_mode(PersistMode::ExplicitlyRevoked),
+        )
+        .await?;
+    todo!()
 }
