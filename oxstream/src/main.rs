@@ -17,11 +17,14 @@ async fn main() -> Result<()> {
     let (node_id, owned_fd) = screencast_source().await?;
     let fd = owned_fd.as_raw_fd();
 
+    let fd_str = fd.to_string();
+    let node_id_str = node_id.to_string();
+
     let src = make_element(
         "pipewiresrc",
         Some(vec![
-            ("fd", fd.to_string().as_str()),
-            ("path", node_id.to_string().as_str()),
+            ("fd", fd_str.as_str()),
+            ("path", node_id_str.as_str()),
         ]),
     )?;
     info!("Source element created successfully");
@@ -162,7 +165,15 @@ async fn screencast_source() -> Result<(u32, OwnedFd)> {
         .response()?;
 
     info!("Screencast started successfully: {:?}", response);
-    let node_id = response.streams()[0].pipe_wire_node_id();
+
+    let stream = match response.streams().first() {
+        Some(stream) => stream,
+        None => {
+            error!("No streams available in screencast response");
+            return Err(anyhow!("No streams available in screencast response"));
+        }
+    };
+    let node_id = stream.pipe_wire_node_id();
     info!("PipeWire node ID: {}", node_id);
     let ownd_fd = proxy
         .open_pipe_wire_remote(&session, Default::default())
