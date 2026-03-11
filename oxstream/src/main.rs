@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use ashpd::desktop::screencast::Screencast;
 use gst::prelude::*;
 use gst::{
     Element, ElementFactory, Pipeline, glib::object::ObjectExt, prelude::GObjectExtManualGst,
