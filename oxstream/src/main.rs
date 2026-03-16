@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
 use ashpd::desktop::PersistMode;
-use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
+use ashpd::desktop::screencast::{
+    CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, SourceType,
+    StartCastOptions,
+};
 use gst::prelude::*;
 use gst::{
     Element, ElementFactory, Pipeline, glib::object::ObjectExt, prelude::GObjectExtManualGst,
@@ -84,7 +87,7 @@ async fn main() -> Result<()> {
                 let err_msg = err.error().to_string();
                 error!(
                     "Error from {:?}: {} ({:?})",
-                    err.src().map(|s| s.path_string()),
+                    err.src().map(GstObjectExt::path_string),
                     err_msg,
                     err.debug()
                 );
@@ -117,19 +120,16 @@ fn init_gst() -> Result<()> {
 }
 
 fn make_element(title: &str, properties: Option<Vec<(&str, &str)>>) -> Result<Element> {
-    let _ = match ElementFactory::find(title) {
-        Some(factory) => factory,
-        None => {
-            error!("Element factory for '{}' not found", title);
-            return Err(anyhow!("Element factory for '{}' not found", title));
-        }
+    let Some(_factory) = ElementFactory::find(title) else {
+        error!("Element factory for '{}' not found", title);
+        return Err(anyhow!("Element factory for '{title}' not found"));
     };
 
     let built = match ElementFactory::make(title).build() {
         Ok(element) => element,
         Err(err) => {
             error!("Failed to create element '{}': {}", title, err);
-            return Err(anyhow!("Failed to create element '{}': {}", title, err));
+            return Err(anyhow!("Failed to create element '{title}': {err}"));
         }
     };
 
@@ -137,11 +137,7 @@ fn make_element(title: &str, properties: Option<Vec<(&str, &str)>>) -> Result<El
         for (name, _) in &props {
             if built.find_property(name).is_none() {
                 error!("Property '{}' not found for element '{}'", name, title);
-                return Err(anyhow!(
-                    "Property '{}' not found for element '{}'",
-                    name,
-                    title
-                ));
+                return Err(anyhow!("Property '{name}' not found for element '{title}'"));
             }
         }
         for (name, value) in props {
@@ -155,13 +151,14 @@ fn make_pipeline(elements: Vec<&Element>) -> Result<Pipeline> {
     let pipeline = Pipeline::new();
     if let Err(err) = pipeline.add_many(elements) {
         error!("Failed to add elements to pipeline: {}", err);
-        return Err(anyhow!("Failed to add elements to pipeline: {}", err));
-    };
+        return Err(anyhow!("Failed to add elements to pipeline: {err}"));
+    }
     Ok(pipeline)
 }
 
 async fn screencast_source() -> Result<(u32, OwnedFd)> {
     let proxy = Screencast::new().await?;
+    #[allow(clippy::default_trait_access)]
     let session = proxy.create_session(Default::default()).await?;
 
     proxy
@@ -176,25 +173,22 @@ async fn screencast_source() -> Result<(u32, OwnedFd)> {
         .await?;
 
     let response = proxy
-        .start(&session, None, Default::default())
+        .start(&session, None, StartCastOptions::default())
         .await?
         .response()?;
 
     info!("Screencast started successfully: {:?}", response);
 
-    let stream = match response.streams().first() {
-        Some(stream) => stream,
-        None => {
-            error!("No streams available in screencast response");
-            return Err(anyhow!("No streams available in screencast response"));
-        }
+    let Some(stream) = response.streams().first() else {
+        error!("No streams available in screencast response");
+        return Err(anyhow!("No streams available in screencast response"));
     };
 
     let node_id = stream.pipe_wire_node_id();
     info!("PipeWire node ID: {}", node_id);
 
     let owned_fd = proxy
-        .open_pipe_wire_remote(&session, Default::default())
+        .open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default())
         .await?;
     info!("PipeWire remote FD opened: {:?}", owned_fd);
 
