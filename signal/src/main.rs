@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use anyhow::Result;
-use axum::extract::WebSocketUpgrade;
 use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::{Router, routing::get};
+use dashmap::DashMap;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tracing::info;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,11 +90,36 @@ pub struct ErrorMessage {
     pub details: String,
 }
 
+pub type Tx = mpsc::Sender<Message>;
+
+pub struct PeerEntry {
+    pub role: PeerRole,
+    pub tx: Tx,
+    pub meta: Option<serde_json::Value>,
+}
+
+pub struct SessionEntry {
+    pub producer_id: String,
+    pub consumer_id: String,
+}
+
+#[derive(Default)]
+pub struct AppState {
+    pub peers: DashMap<String, PeerEntry>,
+    pub sessions: DashMap<String, SessionEntry>,
+}
+
+pub type SharedState = Arc<AppState>;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
+    info!("Initializing application state...");
+    let state = Arc::new(AppState::default());
+    info!("Application state initialized successfully");
+
     info!("Starting Signalling server...");
-    let app = Router::new().route("/", get(ws_handler));
+    let app = Router::new().route("/", get(ws_handler)).with_state(state);
     info!("Router configured successfully");
 
     info!("Opening TCP listener on 127.0.0.1:8080");
@@ -102,11 +131,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_socket)
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<SharedState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket) {
+async fn handle_socket(socket: WebSocket, _state: SharedState) {
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(32);
 
